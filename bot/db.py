@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import aiosqlite
+
+DB_PATH = Path(__file__).resolve().parent.parent / "school_schedule.db"
+MODELS_PATH = Path(__file__).resolve().parent / "models.sql"
+
+
+class Database:
+    def __init__(self, db_path: Path = DB_PATH):
+        self.db_path = db_path
+
+    async def init(self) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            schema = MODELS_PATH.read_text(encoding="utf-8")
+            await db.executescript(schema)
+            await db.commit()
+
+    async def _execute(self, query: str, params: tuple[Any, ...] = ()) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(query, params)
+            await db.commit()
+
+    async def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        rows = await self._fetchall(query, params)
+        return rows[0] if rows else None
+
+    async def upsert_schedule_item(
+        self,
+        day_of_week: int,
+        lesson_number: int,
+        subject: str,
+        room: str | None,
+        teacher: str | None,
+        start_time: str | None,
+        end_time: str | None,
+        is_online: bool,
+    ) -> None:
+        query = """
+        INSERT INTO schedule_items (
+            day_of_week, lesson_number, subject, room, teacher, start_time, end_time, is_online
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(day_of_week, lesson_number)
+        DO UPDATE SET
+            subject = excluded.subject,
+            room = excluded.room,
+            teacher = excluded.teacher,
+            start_time = excluded.start_time,
+            end_time = excluded.end_time,
+            is_online = excluded.is_online
+        """
+        await self._execute(
+            query,
+            (
+                day_of_week,
+                lesson_number,
+                subject,
+                room,
+                teacher,
+                start_time,
+                end_time,
+                1 if is_online else 0,
+            ),
+        )
+
+    async def delete_schedule_item(self, day_of_week: int, lesson_number: int) -> int:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "DELETE FROM schedule_items WHERE day_of_week = ? AND lesson_number = ?",
+                (day_of_week, lesson_number),
+            )
+            await db.commit()
+            return cursor.rowcount
+
+    async def get_schedule_for_day(self, day_of_week: int) -> list[dict[str, Any]]:
+        return await self._fetchall(
+            """
+            SELECT *
+            FROM schedule_items
+            WHERE day_of_week = ?
+            ORDER BY lesson_number ASC
+            """,
+            (day_of_week,),
+        )
+
+    async def get_schedule_for_week(self) -> list[dict[str, Any]]:
+        return await self._fetchall(
+            """
+            SELECT *
+            FROM schedule_items
+            ORDER BY day_of_week ASC, lesson_number ASC
+            """
+        )
+
+    async def set_user_reminders_enabled(self, user_id: int, enabled: bool) -> None:
+        await self._execute(
+            """
+            INSERT INTO user_settings (user_id, reminders_enabled)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET reminders_enabled = excluded.reminders_enabled
+            """,
+            (user_id, 1 if enabled else 0),
+        )
+
+    async def set_user_reminder_minutes(self, user_id: int, minutes: int) -> None:
+        await self._execute(
+            """
+            INSERT INTO user_settings (user_id, reminder_minutes)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET reminder_minutes = excluded.reminder_minutes
+            """,
+            (user_id, minutes),
+        )
+
+    async def get_user_settings(self, user_id: int) -> dict[str, Any]:
+        row = await self._fetchone(
+            "SELECT * FROM user_settings WHERE user_id = ?",
+            (user_id,),
+        )
+        if row:
+            return row
+        return {
+            "user_id": user_id,
+            "reminders_enabled": 0,
+            "reminder_minutes": 10,
+        }
+
+    async def get_reminder_subscribers(self) -> list[dict[str, Any]]:
+        return await self._fetchall(
+            """
+            SELECT user_id, reminders_enabled, reminder_minutes
+            FROM user_settings
+            WHERE reminders_enabled = 1
+            """
+        )
+
+    async def upsert_bell_time(self, lesson_number: int, start_time: str, end_time: str) -> None:
+        await self._execute(
+            """
+            INSERT INTO bell_times (lesson_number, start_time, end_time)
+            VALUES (?, ?, ?)
+            ON CONFLICT(lesson_number)
+            DO UPDATE SET
+                start_time = excluded.start_time,
+                end_time = excluded.end_time
+            """,
+            (lesson_number, start_time, end_time),
+        )
+
+    async def get_bell_times(self) -> list[dict[str, Any]]:
+        return await self._fetchall(
+            "SELECT * FROM bell_times ORDER BY lesson_number ASC"
+        )
+
+    async def get_bell_time(self, lesson_number: int) -> dict[str, Any] | None:
+        return await self._fetchone(
+            "SELECT * FROM bell_times WHERE lesson_number = ?",
+            (lesson_number,),
+        )
+
+    async def export_json(self) -> str:
+        schedule = await self.get_schedule_for_week()
+        bells = await self.get_bell_times()
+        payload = {
+            "schedule_items": schedule,
+            "bell_times": bells,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    async def import_json(self, content: str) -> tuple[int, int]:
+        data = json.loads(content)
+        schedule_items = data.get("schedule_items", [])
+        bell_times = data.get("bell_times", [])
+
+        imported_schedule = 0
+        for item in schedule_items:
+            await self.upsert_schedule_item(
+                day_of_week=int(item["day_of_week"]),
+                lesson_number=int(item["lesson_number"]),
+                subject=str(item["subject"]).strip(),
+                room=(str(item["room"]).strip() if item.get("room") else None),
+                teacher=(str(item["teacher"]).strip() if item.get("teacher") else None),
+                start_time=(str(item["start_time"]).strip() if item.get("start_time") else None),
+                end_time=(str(item["end_time"]).strip() if item.get("end_time") else None),
+                is_online=bool(item.get("is_online", 0)),
+            )
+            imported_schedule += 1
+
+        imported_bells = 0
+        for bell in bell_times:
+            await self.upsert_bell_time(
+                lesson_number=int(bell["lesson_number"]),
+                start_time=str(bell["start_time"]),
+                end_time=str(bell["end_time"]),
+            )
+            imported_bells += 1
+
+        return imported_schedule, imported_bells
