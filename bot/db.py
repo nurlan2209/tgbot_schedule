@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
-DB_PATH = Path(__file__).resolve().parent.parent / "school_schedule.db"
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "school_schedule.db"
+DB_PATH = Path(os.getenv("DB_PATH", str(DEFAULT_DB_PATH)))
 MODELS_PATH = Path(__file__).resolve().parent / "models.sql"
 
 
@@ -15,6 +18,7 @@ class Database:
         self.db_path = db_path
 
     async def init(self) -> None:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
             schema = MODELS_PATH.read_text(encoding="utf-8")
             await db.executescript(schema)
@@ -169,6 +173,59 @@ class Database:
         return await self._fetchone(
             "SELECT * FROM bell_times WHERE lesson_number = ?",
             (lesson_number,),
+        )
+
+    async def reminder_already_sent(
+        self,
+        date_key: str,
+        user_id: int,
+        day_of_week: int,
+        lesson_number: int,
+        reminder_minutes: int,
+    ) -> bool:
+        row = await self._fetchone(
+            """
+            SELECT id
+            FROM reminder_log
+            WHERE date_key = ?
+              AND user_id = ?
+              AND day_of_week = ?
+              AND lesson_number = ?
+              AND reminder_minutes = ?
+            """,
+            (date_key, user_id, day_of_week, lesson_number, reminder_minutes),
+        )
+        return row is not None
+
+    async def save_reminder_sent(
+        self,
+        date_key: str,
+        user_id: int,
+        day_of_week: int,
+        lesson_number: int,
+        reminder_minutes: int,
+    ) -> None:
+        await self._execute(
+            """
+            INSERT OR IGNORE INTO reminder_log (
+                date_key, user_id, day_of_week, lesson_number, reminder_minutes, sent_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                date_key,
+                user_id,
+                day_of_week,
+                lesson_number,
+                reminder_minutes,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+    async def cleanup_old_reminder_log(self, keep_days: int = 7) -> None:
+        border = (datetime.now(timezone.utc) - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+        await self._execute(
+            "DELETE FROM reminder_log WHERE date_key < ?",
+            (border,),
         )
 
     async def export_json(self) -> str:

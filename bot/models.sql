@@ -24,3 +24,16 @@ CREATE TABLE IF NOT EXISTS bell_times (
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS reminder_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date_key TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    lesson_number INTEGER NOT NULL,
+    reminder_minutes INTEGER NOT NULL,
+    sent_at TEXT NOT NULL,
+    UNIQUE(date_key, user_id, day_of_week, lesson_number, reminder_minutes)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_log_date ON reminder_log(date_key);
