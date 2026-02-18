@@ -19,6 +19,8 @@ class AddLessonFSM(StatesGroup):
     subject = State()
     room = State()
     online = State()
+    start_time = State()
+    end_time = State()
     teacher = State()
 
 
@@ -94,9 +96,17 @@ async def admin_back(message: Message, state: FSMContext, settings) -> None:
         await state.set_state(AddLessonFSM.room)
         await message.answer("Введи кабинет или '-' если пусто:", reply_markup=back_keyboard())
         return
-    if current_state == AddLessonFSM.teacher.state:
+    if current_state == AddLessonFSM.start_time.state:
         await state.set_state(AddLessonFSM.online)
         await message.answer("Урок онлайн?", reply_markup=yes_no_keyboard(prefix="admin_add_online"))
+        return
+    if current_state == AddLessonFSM.end_time.state:
+        await state.set_state(AddLessonFSM.start_time)
+        await message.answer("Время начала урока (HH:MM):", reply_markup=back_keyboard())
+        return
+    if current_state == AddLessonFSM.teacher.state:
+        await state.set_state(AddLessonFSM.end_time)
+        await message.answer("Время конца урока (HH:MM):", reply_markup=back_keyboard())
         return
 
     if current_state == DeleteLessonFSM.day.state:
@@ -185,16 +195,40 @@ async def add_room(message: Message, state: FSMContext) -> None:
 
 
 @admin_router.callback_query(F.data.startswith("admin_add_online:"), AddLessonFSM.online)
-async def add_online(query: CallbackQuery, state: FSMContext, settings, db) -> None:
+async def add_online(query: CallbackQuery, state: FSMContext, settings) -> None:
     if not await _require_admin_cb(query, settings):
         return
 
     answer = query.data.split(":", 1)[1]
     is_online = answer == "yes"
     await state.update_data(is_online=is_online)
-    await state.set_state(AddLessonFSM.teacher)
-    await query.message.answer("Учитель (или '-' если пропустить):", reply_markup=back_keyboard())
+    await state.set_state(AddLessonFSM.start_time)
+    await query.message.answer("Время начала урока (HH:MM):", reply_markup=back_keyboard())
     await query.answer()
+
+
+@admin_router.message(AddLessonFSM.start_time)
+async def add_start_time(message: Message, state: FSMContext) -> None:
+    value = (message.text or "").strip()
+    if not is_valid_time(value):
+        await message.answer("Некорректное время. Пример: 08:30")
+        return
+
+    await state.update_data(start_time=value)
+    await state.set_state(AddLessonFSM.end_time)
+    await message.answer("Время конца урока (HH:MM):", reply_markup=back_keyboard())
+
+
+@admin_router.message(AddLessonFSM.end_time)
+async def add_end_time(message: Message, state: FSMContext) -> None:
+    value = (message.text or "").strip()
+    if not is_valid_time(value):
+        await message.answer("Некорректное время. Пример: 09:10")
+        return
+
+    await state.update_data(end_time=value)
+    await state.set_state(AddLessonFSM.teacher)
+    await message.answer("Учитель (или '-' если пропустить):", reply_markup=back_keyboard())
 
 
 @admin_router.message(AddLessonFSM.teacher)
@@ -209,8 +243,8 @@ async def add_teacher(message: Message, state: FSMContext, db) -> None:
         subject=data["subject"],
         room=data.get("room"),
         teacher=teacher_value,
-        start_time=None,
-        end_time=None,
+        start_time=data["start_time"],
+        end_time=data["end_time"],
         is_online=bool(data.get("is_online", False)),
     )
 
@@ -324,4 +358,3 @@ async def setbells_end(message: Message, state: FSMContext, db) -> None:
     )
     await state.clear()
     await message.answer("Звонок сохранен ✅", reply_markup=admin_keyboard())
-

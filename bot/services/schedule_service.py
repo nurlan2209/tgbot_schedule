@@ -28,7 +28,6 @@ class ScheduleService:
                 f"{item['lesson_number']}) {item['subject']} - {time_text} - {room_text}{teacher_text}"
             )
 
-        lines.append("\nБүгінгі сабақтар дайын ✅")
         return "\n".join(lines)
 
     async def format_week_schedule(self) -> str:
