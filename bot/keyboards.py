@@ -19,8 +19,15 @@ def admin_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="➕ Добавить/изменить урок"), KeyboardButton(text="➖ Удалить урок")],
             [KeyboardButton(text="📄 Список на день"), KeyboardButton(text="⏰ Настроить звонки")],
-            [KeyboardButton(text="⬇️ Export JSON"), KeyboardButton(text="⬆️ Import JSON")],
+            [KeyboardButton(text="⬅️ Назад"), KeyboardButton(text="🏠 Главное меню")],
         ],
+        resize_keyboard=True,
+    )
+
+
+def back_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⬅️ Назад"), KeyboardButton(text="🏠 Главное меню")]],
         resize_keyboard=True,
     )
 

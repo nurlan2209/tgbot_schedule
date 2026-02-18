@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -227,42 +225,3 @@ class Database:
             "DELETE FROM reminder_log WHERE date_key < ?",
             (border,),
         )
-
-    async def export_json(self) -> str:
-        schedule = await self.get_schedule_for_week()
-        bells = await self.get_bell_times()
-        payload = {
-            "schedule_items": schedule,
-            "bell_times": bells,
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
-
-    async def import_json(self, content: str) -> tuple[int, int]:
-        data = json.loads(content)
-        schedule_items = data.get("schedule_items", [])
-        bell_times = data.get("bell_times", [])
-
-        imported_schedule = 0
-        for item in schedule_items:
-            await self.upsert_schedule_item(
-                day_of_week=int(item["day_of_week"]),
-                lesson_number=int(item["lesson_number"]),
-                subject=str(item["subject"]).strip(),
-                room=(str(item["room"]).strip() if item.get("room") else None),
-                teacher=(str(item["teacher"]).strip() if item.get("teacher") else None),
-                start_time=(str(item["start_time"]).strip() if item.get("start_time") else None),
-                end_time=(str(item["end_time"]).strip() if item.get("end_time") else None),
-                is_online=bool(item.get("is_online", 0)),
-            )
-            imported_schedule += 1
-
-        imported_bells = 0
-        for bell in bell_times:
-            await self.upsert_bell_time(
-                lesson_number=int(bell["lesson_number"]),
-                start_time=str(bell["start_time"]),
-                end_time=str(bell["end_time"]),
-            )
-            imported_bells += 1
-
-        return imported_schedule, imported_bells

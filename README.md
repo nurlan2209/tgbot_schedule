@@ -9,7 +9,7 @@ Telegram-бот для 8 класса: расписание по дням, ад�
   - `/today`, `/tomorrow`, `/week`, `/day`, `/bell`
   - `/remind_on`, `/remind_off`, `/remind_time <минуты>`
 - Админ:
-  - `/admin`, `/add`, `/delete`, `/list`, `/setbells`, `/export`, `/import`
+  - `/admin`, `/add`, `/delete`, `/list`, `/setbells`
 - Хранение данных: SQLite (`DB_PATH`)
 - Таймзона через `.env` (по умолчанию `Asia/Qyzylorda`)
 
@@ -114,35 +114,4 @@ Railway поднимет worker автоматически по `python3 -m bot`
 /delete
 /list
 /setbells
-/export
-/import
-```
-
-## 6. Формат импорта/экспорта JSON
-
-Экспорт отдаёт файл со структурой:
-
-```json
-{
-  "schedule_items": [
-    {
-      "id": 1,
-      "day_of_week": 1,
-      "lesson_number": 1,
-      "subject": "Математика",
-      "room": "205",
-      "teacher": "Иванова",
-      "start_time": "08:30",
-      "end_time": "09:10",
-      "is_online": 0
-    }
-  ],
-  "bell_times": [
-    {
-      "lesson_number": 1,
-      "start_time": "08:30",
-      "end_time": "09:10"
-    }
-  ]
-}
 ```

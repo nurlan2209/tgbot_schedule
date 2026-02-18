@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import io
-import json
-
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message
 
-from ..keyboards import admin_keyboard, day_inline_keyboard, yes_no_keyboard
+from ..keyboards import admin_keyboard, back_keyboard, day_inline_keyboard, user_main_keyboard, yes_no_keyboard
 from ..texts import ACCESS_DENIED, ADMIN_TEXT
 from ..utils import is_valid_day, is_valid_lesson_number, is_valid_time
 
@@ -36,10 +33,6 @@ class SetBellsFSM(StatesGroup):
     end_time = State()
 
 
-class ImportFSM(StatesGroup):
-    waiting_file = State()
-
-
 async def _require_admin(message: Message, settings) -> bool:
     if not message.from_user or message.from_user.id not in settings.admin_ids:
         await message.answer(ACCESS_DENIED)
@@ -56,9 +49,79 @@ async def _require_admin_cb(query: CallbackQuery, settings) -> bool:
 
 
 @admin_router.message(Command("admin"))
-async def cmd_admin(message: Message, settings) -> None:
+async def cmd_admin(message: Message, state: FSMContext, settings) -> None:
     if not await _require_admin(message, settings):
         return
+    await state.clear()
+    await message.answer(ADMIN_TEXT, reply_markup=admin_keyboard())
+
+
+@admin_router.message(F.text == "🏠 Главное меню")
+async def to_user_main_menu(message: Message, state: FSMContext, settings) -> None:
+    if not await _require_admin(message, settings):
+        return
+    await state.clear()
+    await message.answer("Ок, вернул в главное меню 👌", reply_markup=user_main_keyboard())
+
+
+@admin_router.message(StateFilter("*"), F.text == "⬅️ Назад")
+async def admin_back(message: Message, state: FSMContext, settings) -> None:
+    if not await _require_admin(message, settings):
+        return
+
+    current_state = await state.get_state()
+    if current_state is None:
+        await message.answer("Ты уже в админ-меню", reply_markup=admin_keyboard())
+        return
+
+    if current_state == AddLessonFSM.day.state:
+        await state.clear()
+        await message.answer(ADMIN_TEXT, reply_markup=admin_keyboard())
+        return
+    if current_state == AddLessonFSM.lesson_number.state:
+        await state.set_state(AddLessonFSM.day)
+        await message.answer("Выбери день:", reply_markup=day_inline_keyboard(prefix="admin_add_day"))
+        return
+    if current_state == AddLessonFSM.subject.state:
+        await state.set_state(AddLessonFSM.lesson_number)
+        await message.answer("Введи номер урока (1-10):", reply_markup=back_keyboard())
+        return
+    if current_state == AddLessonFSM.room.state:
+        await state.set_state(AddLessonFSM.subject)
+        await message.answer("Введи предмет:", reply_markup=back_keyboard())
+        return
+    if current_state == AddLessonFSM.online.state:
+        await state.set_state(AddLessonFSM.room)
+        await message.answer("Введи кабинет или '-' если пусто:", reply_markup=back_keyboard())
+        return
+    if current_state == AddLessonFSM.teacher.state:
+        await state.set_state(AddLessonFSM.online)
+        await message.answer("Урок онлайн?", reply_markup=yes_no_keyboard(prefix="admin_add_online"))
+        return
+
+    if current_state == DeleteLessonFSM.day.state:
+        await state.clear()
+        await message.answer(ADMIN_TEXT, reply_markup=admin_keyboard())
+        return
+    if current_state == DeleteLessonFSM.lesson_number.state:
+        await state.set_state(DeleteLessonFSM.day)
+        await message.answer("Выбери день для удаления:", reply_markup=day_inline_keyboard(prefix="admin_del_day"))
+        return
+
+    if current_state == SetBellsFSM.lesson_number.state:
+        await state.clear()
+        await message.answer(ADMIN_TEXT, reply_markup=admin_keyboard())
+        return
+    if current_state == SetBellsFSM.start_time.state:
+        await state.set_state(SetBellsFSM.lesson_number)
+        await message.answer("Номер урока для звонка (1-10):", reply_markup=back_keyboard())
+        return
+    if current_state == SetBellsFSM.end_time.state:
+        await state.set_state(SetBellsFSM.start_time)
+        await message.answer("Время начала (HH:MM):", reply_markup=back_keyboard())
+        return
+
+    await state.clear()
     await message.answer(ADMIN_TEXT, reply_markup=admin_keyboard())
 
 
@@ -84,7 +147,7 @@ async def add_day_selected(query: CallbackQuery, state: FSMContext, settings) ->
 
     await state.update_data(day_of_week=day)
     await state.set_state(AddLessonFSM.lesson_number)
-    await query.message.answer("Введи номер урока (1-10):")
+    await query.message.answer("Введи номер урока (1-10):", reply_markup=back_keyboard())
     await query.answer()
 
 
@@ -97,7 +160,7 @@ async def add_lesson_number(message: Message, state: FSMContext) -> None:
 
     await state.update_data(lesson_number=int(text))
     await state.set_state(AddLessonFSM.subject)
-    await message.answer("Введи предмет:")
+    await message.answer("Введи предмет:", reply_markup=back_keyboard())
 
 
 @admin_router.message(AddLessonFSM.subject)
@@ -109,7 +172,7 @@ async def add_subject(message: Message, state: FSMContext) -> None:
 
     await state.update_data(subject=subject)
     await state.set_state(AddLessonFSM.room)
-    await message.answer("Введи кабинет или '-' если пусто:")
+    await message.answer("Введи кабинет или '-' если пусто:", reply_markup=back_keyboard())
 
 
 @admin_router.message(AddLessonFSM.room)
@@ -130,7 +193,7 @@ async def add_online(query: CallbackQuery, state: FSMContext, settings, db) -> N
     is_online = answer == "yes"
     await state.update_data(is_online=is_online)
     await state.set_state(AddLessonFSM.teacher)
-    await query.message.answer("Учитель (или '-' если пропустить):")
+    await query.message.answer("Учитель (или '-' если пропустить):", reply_markup=back_keyboard())
     await query.answer()
 
 
@@ -152,7 +215,7 @@ async def add_teacher(message: Message, state: FSMContext, db) -> None:
     )
 
     await state.clear()
-    await message.answer("Сохранено ✅")
+    await message.answer("Сохранено ✅", reply_markup=admin_keyboard())
 
 
 @admin_router.message(Command("delete"))
@@ -173,7 +236,7 @@ async def del_day_selected(query: CallbackQuery, state: FSMContext, settings) ->
     day = int(query.data.split(":", 1)[1])
     await state.update_data(day_of_week=day)
     await state.set_state(DeleteLessonFSM.lesson_number)
-    await query.message.answer("Введи номер урока для удаления (1-10):")
+    await query.message.answer("Введи номер урока для удаления (1-10):", reply_markup=back_keyboard())
     await query.answer()
 
 
@@ -189,9 +252,9 @@ async def del_lesson_number(message: Message, state: FSMContext, db) -> None:
     await state.clear()
 
     if deleted:
-        await message.answer("Урок удален ✅")
+        await message.answer("Урок удален ✅", reply_markup=admin_keyboard())
     else:
-        await message.answer("Такого урока не найдено")
+        await message.answer("Такого урока не найдено", reply_markup=admin_keyboard())
 
 
 @admin_router.message(Command("list"))
@@ -219,7 +282,7 @@ async def cmd_setbells(message: Message, state: FSMContext, settings) -> None:
         return
     await state.clear()
     await state.set_state(SetBellsFSM.lesson_number)
-    await message.answer("Номер урока для звонка (1-10):")
+    await message.answer("Номер урока для звонка (1-10):", reply_markup=back_keyboard())
 
 
 @admin_router.message(SetBellsFSM.lesson_number)
@@ -231,7 +294,7 @@ async def setbells_lesson(message: Message, state: FSMContext) -> None:
 
     await state.update_data(lesson_number=int(text))
     await state.set_state(SetBellsFSM.start_time)
-    await message.answer("Время начала (HH:MM):")
+    await message.answer("Время начала (HH:MM):", reply_markup=back_keyboard())
 
 
 @admin_router.message(SetBellsFSM.start_time)
@@ -243,7 +306,7 @@ async def setbells_start(message: Message, state: FSMContext) -> None:
 
     await state.update_data(start_time=value)
     await state.set_state(SetBellsFSM.end_time)
-    await message.answer("Время конца (HH:MM):")
+    await message.answer("Время конца (HH:MM):", reply_markup=back_keyboard())
 
 
 @admin_router.message(SetBellsFSM.end_time)
@@ -260,58 +323,5 @@ async def setbells_end(message: Message, state: FSMContext, db) -> None:
         end_time=value,
     )
     await state.clear()
-    await message.answer("Звонок сохранен ✅")
+    await message.answer("Звонок сохранен ✅", reply_markup=admin_keyboard())
 
-
-@admin_router.message(Command("export"))
-@admin_router.message(F.text == "⬇️ Export JSON")
-async def cmd_export(message: Message, settings, db) -> None:
-    if not await _require_admin(message, settings):
-        return
-
-    content = await db.export_json()
-    data = content.encode("utf-8")
-    file = BufferedInputFile(data, filename="schedule_export.json")
-    await message.answer_document(document=file, caption="Экспорт готов")
-
-
-@admin_router.message(Command("import"))
-@admin_router.message(F.text == "⬆️ Import JSON")
-async def cmd_import(message: Message, state: FSMContext, settings) -> None:
-    if not await _require_admin(message, settings):
-        return
-
-    await state.set_state(ImportFSM.waiting_file)
-    await message.answer("Отправь JSON-файл с расписанием")
-
-
-@admin_router.message(ImportFSM.waiting_file, F.document)
-async def import_file(message: Message, state: FSMContext, db) -> None:
-    if not message.document:
-        await message.answer("Нужен JSON-файл")
-        return
-
-    if not message.document.file_name.lower().endswith(".json"):
-        await message.answer("Файл должен быть .json")
-        return
-
-    try:
-        file = await message.bot.get_file(message.document.file_id)
-        data = io.BytesIO()
-        await message.bot.download(file, destination=data)
-        content = data.getvalue().decode("utf-8")
-
-        imported_schedule, imported_bells = await db.import_json(content)
-        await state.clear()
-        await message.answer(
-            f"Импорт завершен ✅\nУроков: {imported_schedule}\nЗвонков: {imported_bells}"
-        )
-    except json.JSONDecodeError:
-        await message.answer("Некорректный JSON")
-    except Exception:
-        await message.answer("Ошибка импорта")
-
-
-@admin_router.message(ImportFSM.waiting_file)
-async def import_wrong_type(message: Message) -> None:
-    await message.answer("Отправь файл формата .json")
